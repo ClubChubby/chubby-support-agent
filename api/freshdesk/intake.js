@@ -1,5 +1,6 @@
 import { verifyChubby1 } from "../../lib/chubby1.js";
 import { classifyTicket } from "../../lib/classify.js";
+import { applicationEnabled, applyChubby1 } from "../../lib/coupon-application.js";
 
 function json(res, status, body) {
   // Allowlisted outcome fields only: never log payloads, identifiers, or secrets.
@@ -11,7 +12,8 @@ function json(res, status, body) {
     previewEligible: body.preview?.eligible ?? null,
     couponId: body.preview?.couponId ?? null,
     httpStatus: status,
-    actionTaken: false
+    ticketId: /^\d+$/.test(String(body.ticketId ?? "")) ? String(body.ticketId) : null,
+    actionTaken: body.actionTaken === null ? null : body.actionTaken === true
   }));
   res.status(status).setHeader("content-type", "application/json");
   res.send(JSON.stringify(body));
@@ -50,6 +52,11 @@ export default async function handler(req, res) {
 
   if (classification.workflow === "chubby1") {
     const result = await verifyChubby1(body);
+    if (result.body.status === "preview_ready_read_only" &&
+        applicationEnabled(result.body.stripeCustomer.id, subject)) {
+      const applied = await applyChubby1(result.body.stripeCustomer.id, subject);
+      return json(res, 200, { ...result.body, ...applied, classification });
+    }
     return json(res, result.statusCode, { ...result.body, classification });
   }
 

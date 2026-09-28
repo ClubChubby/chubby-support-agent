@@ -23,7 +23,11 @@ registerHooks({
           globalThis.stripeCalls.push({ retrieve: id });
           if (globalThis.stripeError) throw Object.assign(new Error("lookup failed"), { code: globalThis.stripeError });
           return globalThis.stripeData[0];
+        }, update: async (id, params) => {
+          globalThis.writeCalls.push({ id, params });
+          return { ...globalThis.stripeData[0], metadata: params.metadata, discount: { coupon: { id: params.coupon } } };
         }};
+        invoices = { list: async () => ({ data: [], has_more: false }) };
 
         coupons = { retrieve: async (id) => {
           globalThis.previewCalls.push({ coupon: id });
@@ -42,10 +46,13 @@ registerHooks({
 const { default: intake } = await import("../api/freshdesk/intake.js");
 const { default: direct } = await import("../api/freshdesk/chubby1.js");
 beforeEach(() => {
+  delete process.env.CHUBBY1_APPLICATION_MODE;
+  delete process.env.CHUBBY1_PILOT_CUSTOMERS;
   process.env.WEBHOOK_SECRET = "test-secret";
   process.env.STRIPE_SECRET_KEY = "sk_test_fixture";
   process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([{ email: "member@example.com", phone: "6265551234", eligible: true }]);
   globalThis.stripeCalls = [];
+  globalThis.writeCalls = [];
   globalThis.stripeData = [{ id: "cus_fixture", email: "member@example.com", phone: "+1 626 555 1234" }];
   globalThis.stripeError = false;
   globalThis.previewCalls = [];
@@ -124,6 +131,7 @@ for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
   test(name + ": another sender can name an approved account", async () => {
     for (const message of ["Chubby 1 <MEMBER@EXAMPLE.COM>.", "CHUBBY1 626-555-1234"]) {
       globalThis.stripeCalls = [];
+  globalThis.writeCalls = [];
       const r = await request(handler, { body: { ticket_id: "123", email: "sender@example.com", message, stripeCustomerId: "cus_untrusted" } });
       assert.equal(r.body.status, "preview_ready_read_only");
       assert.equal(r.body.stripeCustomer.id, "cus_fixture");
@@ -236,7 +244,7 @@ for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
     assert.deepEqual(first.body, second.body);
     assert.equal(first.body.preview.couponId, "9MSuudHO");
     assert.equal(first.body.preview.redemptionHistoryChecked, false);
-    assert.equal(first.body.preview.applicationMethod, "not_selected");
+    assert.equal(first.body.preview.applicationMethod, "customer_coupon");
     assert.equal(first.body.actionTaken, false);
   });
 
@@ -263,4 +271,46 @@ test("other workflows retain classification-only behavior", async () => {
   assert.equal(r.body.nextStep, "workflow_not_implemented_yet");
   assert.equal(r.body.actionTaken, false);
   assert.equal(stripeCalls.length, 0);
+});
+
+function enablePilot() {
+  process.env.VERCEL_ENV = "production";
+  process.env.CHUBBY1_APPLICATION_MODE = "pilot";
+  process.env.CHUBBY1_PILOT_CUSTOMERS = "cus_fixture";
+  globalThis.stripeData[0].livemode = true;
+  globalThis.testCoupon.livemode = true;
+  globalThis.testCoupon.applies_to = { products: ["prod_RE0j1f8IisV0EI"] };
+}
+test("pilot intake applies only to the allowlist-selected account", async () => {
+  enablePilot();
+  const r = await request(intake, { body: { ticket_id: "321", email: "outsider@example.com",
+    subject: "AGENTTEST", message: "Chubby 1 member@example.com", customerId: "cus_attacker" } });
+  assert.equal(r.body.status, "coupon_applied");
+  assert.equal(r.body.actionTaken, true);
+  assert.equal(writeCalls.length, 1);
+  assert.equal(writeCalls[0].id, "cus_fixture");
+});
+test("pilot cannot bypass authentication, allowlist or ambiguity", async () => {
+  enablePilot();
+  await request(intake, { headers: {} });
+  process.env.CHUBBY1_ELIGIBILITY_JSON = "[]";
+  await request(intake);
+  process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([
+    { email: "member@example.com", eligible: true }, { phone: "6265551234", eligible: true }
+  ]);
+  await request(intake);
+  assert.equal(writeCalls.length, 0);
+});
+test("direct verifier stays read-only even with live application enabled", async () => {
+  enablePilot();
+  const r = await request(direct);
+  assert.equal(r.body.status, "preview_ready_read_only");
+  assert.equal(writeCalls.length, 0);
+});
+test("live mode skips synthetic AGENTTEST tickets", async () => {
+  enablePilot();
+  process.env.CHUBBY1_APPLICATION_MODE = "live";
+  const r = await request(intake);
+  assert.equal(r.body.status, "preview_ready_read_only");
+  assert.equal(writeCalls.length, 0);
 });

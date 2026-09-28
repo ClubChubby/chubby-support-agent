@@ -26,7 +26,7 @@ Every incoming Freshdesk ticket can be classified into a workflow such as:
 - Unknown / manual review
 
 ### 2. CHUBBY1 workflow
-Current mode: **read-only verification**.
+Default mode: **read-only verification**. Customer coupon application is implemented behind a production-only release switch.
 
 The first workflow:
 
@@ -36,7 +36,7 @@ The first workflow:
 4. Checks the CHUBBY1 eligibility list.
 5. Looks for a matching Stripe customer.
 6. Returns a verification result.
-7. **Does not apply a coupon, change Stripe, or reply to Freshdesk yet.**
+7. In explicitly enabled pilot/live mode, attaches the coupon to the approved Stripe customer after additional checks. Freshdesk replies and resolution remain disabled.
 
 ## Architecture
 
@@ -150,18 +150,81 @@ Coupon duration is reported as configured; no duration is assumed.
 - Existing customer, current subscription, or subscription-item discount: `manual_review`, reason `existing_discount`.
 - Trialing, paused, unpaid, incomplete, or unknown status: manual review.
 - Canceled/incomplete-expired subscriptions do not disqualify; their historical discounts are not treated as current.
-- Invalid/unavailable coupon, wrong value/currency, product restrictions, incomplete reads, and API failures: manual review.
+- Invalid/unavailable coupon, wrong value/currency, unexpected product restrictions, incomplete reads, and API failures: manual review. The confirmed product restriction is Chubby Club PLUS (`prod_RE0j1f8IisV0EI`).
 - Passing all checks: `preview_ready_read_only`, with coupon, approved customer,
   subscription statuses, and `actionTaken: false` in the authenticated response.
   Logs include status/reason and preview eligibility, never customer identifiers.
 
-This is a qualification preview only. It does not choose an application method,
-change a past-due subscription or invoice, create a checkout, reserve a discount,
-apply a coupon, reply to Freshdesk, or resolve a ticket. Historical redemption
-and write idempotency are not implemented; they remain prerequisites to enabling writes.
-Repeated previews perform reads only.
+The default qualification preview and direct CHUBBY1 endpoint perform reads only.
+Only general intake can invoke the gated application workflow described below.
 
 Keep the AGENTTEST restriction. Test a listed account with no active subscription,
 an active account, a past-due account, an account with an existing discount,
 and an identifier absent from the recipient CSV. Only the last case should
 stop before contacting Stripe; list ambiguities also stop before Stripe.
+
+## Controlled coupon application
+
+Application attaches coupon `9MSuudHO` to the **approved Stripe customer**.
+Members finish checkout in the existing app; this service never creates a
+subscription, invoice, charge, checkout link, or Freshdesk response.
+Stripe API version is pinned to `2024-06-20` for customer-level coupon and
+`discount` fields. Product restrictions are explicitly expanded when reading
+coupons. Live writes require a live customer and coupon, USD 87, duration once,
+and exactly the confirmed Chubby Club PLUS product restriction.
+
+Release configuration (private Vercel Production environment only):
+
+- Unset `CHUBBY1_APPLICATION_MODE`: read-only (default and kill switch).
+- `CHUBBY1_APPLICATION_MODE=pilot`: writes only to IDs explicitly listed in
+  `CHUBBY1_PILOT_CUSTOMERS` (comma-separated). AGENTTEST is permitted for those
+  accounts only. The promotion-list and all other checks still apply.
+- `CHUBBY1_APPLICATION_MODE=live`: processes real CHUBBY1 tickets; any subject
+  containing AGENTTEST remains read-only. Nonproduction Vercel deployments
+  never write, regardless of these settings.
+
+Before a mutation the agent scans paginated subscription and invoice history
+for prior CHUBBY1 use, and repeats current customer/coupon/subscription checks.
+Unexpanded, failed, or incomplete history is manual review. Historical CHUBBY1
+attachments, including void invoices, conservatively require review.
+Other existing discounts are never deliberately replaced.
+
+One Stripe customer update writes both the coupon and permanent metadata key
+`chubby1_202609_applied=9MSuudHO:v1`. A deterministic, hashed idempotency key
+is identical across tickets. Stripe handles concurrent retries; the permanent
+marker prevents later reapplication after the discount is consumed and the
+Stripe idempotency cache expires. Do not remove this marker. No personal data
+is placed in the idempotency key or metadata. Pre-existing metadata is preserved.
+External administrators can still change the account between the final read
+and the update: Stripe customer updates do not provide a conditional write.
+Coordinate manual coupon edits during the pilot.
+
+Success: `coupon_applied`, `actionTaken:true`. A previous agent marker returns
+`already_applied` without another write when the application function is reached.
+The intake may instead report `existing_discount` if that earlier guard stops it.
+An uncertain mutation is `manual_review`, `application_outcome_unknown`,
+`actionTaken:null`; inspect Stripe before any manual retry. Do not change the
+idempotency key to work around a timeout. Logs contain numeric ticket IDs and
+outcome fields, never member contact details or the eligibility list.
+
+### Release procedure
+
+1. Deploy with mode unset; check a new AGENTTEST log on the pinned API version.
+2. Select one approved account whose owner can complete app checkout; confirm
+   it has no active membership or current discount. Configure only its Stripe
+   ID in pilot mode. Do not reuse arbitrary QA accounts for real discounts.
+3. Submit a fresh AGENTTEST ticket, inspect `coupon_applied` and the Stripe
+   customer coupon/marker, then verify the app shows the correct discounted
+   Chubby Club PLUS checkout. Payment is completed by the account owner.
+4. Retry the same ticket and a second request for that account; verify no second
+   application. Check timeout and failure handling in the automated suite.
+5. After the pilot, set live mode and expand the existing Freshdesk automation
+   beyond AGENTTEST to the intended CHUBBY1 traffic. Until then real ticket
+   processing is not launched. Keep replies/resolution disabled.
+6. Disable by removing the mode setting and redeploying. This stops subsequent
+   executions; already-running calls may finish and applied coupons are not undone.
+
+No live activation or app-checkout pilot has been completed by this commit.
+The 66 automated tests mock Stripe and do not prove live write permissions or
+in-app checkout behavior. Past-due and existing-discount rules have automated
+coverage; their dedicated live cases remain pending.
