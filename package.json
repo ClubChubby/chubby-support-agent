@@ -8,6 +8,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "stripe": "^18.0.0"
+    "stripe": "^18.0.0",
+    "@vercel/functions": "^3.0.0"
   }
 }

@@ -48,7 +48,19 @@ export default async function handler(req, res) {
   const scope = await checkFreshdeskScope(ticketId, undefined, { allowBackfillControl: true });
   if (!scope.allowed) return json(res, 200, { ok: true, ticketId, status: scope.status, reason: scope.reason, actionTaken: false });
   const batch = backfillBatch(scope);
-  if (batch) return json(res, 200, { ...(await runBackfill(batch)), ticketId });
+  if (batch) {
+    // Acknowledge promptly so Freshdesk does not retry a still-running scan.
+    // Vercel keeps the bounded job alive after the HTTP response is sent.
+    const { waitUntil } = await import("@vercel/functions");
+    waitUntil(runBackfill(batch).then(result => {
+      console.info(JSON.stringify({ event: "freshdesk_backfill_complete", runId: batch.runId,
+        batch: batch.batch, count: result.outcomes.length, actionTaken: result.actionTaken }));
+    }).catch(() => {
+      console.info(JSON.stringify({ event: "freshdesk_backfill_failed", runId: batch.runId,
+        batch: batch.batch, reason: "backfill_interrupted", actionTaken: null }));
+    }));
+    return json(res, 200, { ok: true, status: "backfill_batch_accepted", ticketId, batch: batch.batch, actionTaken: false });
+  }
   const result = await processScopedTicket(scope, { allowPilotException: true });
   return json(res, result.statusCode, result.body);
 }
