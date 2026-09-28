@@ -70,3 +70,12 @@ test('expiry or kill switch prevents any target lookup',async()=>{
   const batch=backfillBatch(scope);process.env.CHUBBY1_APPLICATION_MODE='';await runBackfill(batch);
   assert.equal(scopes.length,0);assert.equal(processes.length,0);
 });
+
+test('operator can reduce batch size without allowing ticket-controlled targets',()=>{
+  config.batchSize=5;process.env.CHUBBY1_BACKFILL=JSON.stringify(config);
+  scope.body.subject=`CHUBBY1 BACKFILL ${config.runId} BATCH 2`;
+  assert.deepEqual(backfillBatch(scope).ids,['6','7','8','9','10']);
+  for(const batchSize of [0,26,1.5,'5']) {
+    process.env.CHUBBY1_BACKFILL=JSON.stringify({...config,batchSize});assert.equal(backfillBatch(scope),null);
+  }
+});
