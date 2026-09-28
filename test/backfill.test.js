@@ -59,7 +59,8 @@ test('shared processor retains open recheck/expiry and never permits pilot excep
   const batch={...backfillBatch(scope),ids:['1']};
   const result=await runBackfill(batch);
   assert.equal(processes[0].requireOpen,true);
-  assert.equal(processes[0].expiresAt,batch.expiresAt);
+  assert.ok(processes[0].expiresAt <= batch.expiresAt);
+  assert.ok(processes[0].expiresAt <= Date.now()+220000);
   assert.notEqual(processes[0].allowPilotException,true);
   assert.equal(result.actionTaken,true);
   assert.equal(JSON.stringify(result).includes('private'),false);

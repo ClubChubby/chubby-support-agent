@@ -95,3 +95,17 @@ test("one-time scan requires current Open status, including before write", async
   ticket.status = 4;
   assert.equal((await checkFreshdeskScope(123, scope.revision, { requireOpen: true })).reason, "ticket_not_open");
 });
+test("rate limits return only safe retry metadata", async () => {
+  globalThis.fetch = async () => ({ ok: false, status: 429, headers: { get: () => "17" } });
+  const r = await checkFreshdeskScope(123);
+  assert.equal(r.reason, "freshdesk_rate_limited");
+  assert.equal(r.retryAfterSeconds, 17);
+});
+test("backfill skips unrelated and synthetic tickets before reading conversations", async () => {
+  ticket.status = 2;
+  ticket.subject = "Cancel membership"; ticket.description_text = "Please cancel";
+  assert.equal((await checkFreshdeskScope(123, undefined, { onlyChubby1: true, requireOpen: true })).reason, "not_chubby1");
+  ticket.subject = "AGENTTEST";
+  assert.equal((await checkFreshdeskScope(123, undefined, { onlyChubby1: true, requireOpen: true })).reason, "synthetic_test_ticket");
+  assert.equal(requests.length, 2);
+});
