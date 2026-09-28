@@ -428,3 +428,28 @@ test("late reassignment prevents coupon mutation", async () => {
   assert.equal(r.body.reason, "not_assigned_to_cody");
   assert.equal(writeCalls.length, 0);
 });
+
+test("verified batch account still requires list eligibility and subscription checks before applying", async () => {
+  enablePilot();
+  process.env.CHUBBY1_APPLICATION_MODE = "live";
+  process.env.CHUBBY1_BACKFILL = JSON.stringify({ expiresAt: Date.now() + 60000, ticketIds: ["123"], accountMatches: [
+    { ticketId: "123", email: "member@example.com", phone: "6265551234", customerId: "cus_fixture", userId: "fixtureUid" }
+  ] });
+  stripeData[0].email = null;
+  stripeData[0].metadata = { uid: "fixtureUid" };
+  subscriptionPages = [{ data: [{ id: "sub_active", status: "active" }], has_more: false }];
+  let r = await request(intake, { body: { ticket_id: "123", email: "member@example.com", subject: "CHUBBY1 help", message: "6265551234" } });
+  assert.equal(r.body.reason, "active_subscription");
+  assert.equal(writeCalls.length, 0);
+  process.env.CHUBBY1_ELIGIBILITY_JSON = "[]";
+  r = await request(intake, { body: { ticket_id: "123", email: "member@example.com", subject: "CHUBBY1 help", message: "6265551234" } });
+  assert.equal(r.body.status, "not_eligible");
+  assert.equal(writeCalls.length, 0);
+  process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([{ email: "member@example.com", phone: "6265551234", eligible: true }]);
+  subscriptionPages = [{ data: [], has_more: false }];
+  r = await request(intake, { body: { ticket_id: "123", email: "member@example.com", subject: "CHUBBY1 help", message: "6265551234" } });
+  assert.equal(r.body.status, "coupon_applied");
+  assert.equal(writeCalls.length, 1);
+  assert.equal(writeCalls[0].id, "cus_fixture");
+  delete process.env.CHUBBY1_BACKFILL;
+});
