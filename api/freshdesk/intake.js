@@ -1,3 +1,4 @@
+import { checkFreshdeskScope } from "../../lib/freshdesk-scope.js";
 import { verifyChubby1 } from "../../lib/chubby1.js";
 import { classifyTicket } from "../../lib/classify.js";
 import { applicationEnabled, applyChubby1 } from "../../lib/coupon-application.js";
@@ -35,10 +36,7 @@ export default async function handler(req, res) {
     return json(res, 401, { ok: false, error: "unauthorized" });
   }
 
-  const body = req.body || {};
-  const ticketId = body.ticket_id ?? null;
-  const subject = body.subject || "";
-  const message = body.message || "";
+  const ticketId = req.body?.ticket_id ?? null;
 
   if (!ticketId) {
     return json(res, 400, {
@@ -48,13 +46,17 @@ export default async function handler(req, res) {
     });
   }
 
+  const scope = await checkFreshdeskScope(ticketId);
+  if (!scope.allowed) return json(res, 200, { ok: true, ticketId, status: scope.status, reason: scope.reason, actionTaken: false });
+  const body = scope.body;
+  const { subject, message } = body;
   const classification = classifyTicket({ subject, message });
 
   if (classification.workflow === "chubby1") {
     const result = await verifyChubby1(body, { allowPilotException: true });
     if (result.body.status === "preview_ready_read_only" &&
         applicationEnabled(result.body.stripeCustomer.id, subject)) {
-      const applied = await applyChubby1(result.body.stripeCustomer.id, subject);
+      const applied = await applyChubby1(result.body.stripeCustomer.id, subject, { ticketId, revision: scope.revision });
       return json(res, 200, { ...result.body, ...applied, classification });
     }
     return json(res, result.statusCode, { ...result.body, classification });

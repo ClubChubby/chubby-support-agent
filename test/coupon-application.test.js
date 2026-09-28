@@ -4,10 +4,12 @@ import { registerHooks } from "node:module";
 
 registerHooks({
   resolve(s, context, next) {
+    if (s.endsWith("/freshdesk-scope.js")) return { url: "mock:scope", shortCircuit: true };
     if (s === "stripe") return { url: "mock:live-stripe", shortCircuit: true };
     return next(s, context);
   },
   load(url, context, next) {
+    if (url === "mock:scope") return { format: "module", shortCircuit: true, source: `export async function checkFreshdeskScope() { return { allowed: true, body: { subject: "AGENTTEST" } }; }` };
     if (url === "mock:live-stripe") return { format: "module", shortCircuit: true, source: `
       export default class Stripe {
         constructor(key, options) { globalThis.apiOptions = options; }
@@ -62,7 +64,7 @@ beforeEach(() => {
   globalThis.historyFailure = false;
   globalThis.lateActive = false;
 });
-const run = () => applyChubby1("cus_fixture", "AGENTTEST");
+const run = () => applyChubby1("cus_fixture", "AGENTTEST", { ticketId: "123", revision: "fixture" });
 const discount = () => ({ id: "di_prior", coupon: { id: "9MSuudHO" } });
 
 test("disabled, preview environments, missing pilot IDs and synthetic live tickets never write", async () => {

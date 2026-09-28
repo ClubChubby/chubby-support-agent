@@ -239,3 +239,31 @@ matching email and phone, and a customer also in CHUBBY1_PILOT_CUSTOMERS.
 It cannot override an ambiguous list match, affect the direct read-only route,
 or run in live mode. Subscription, discount and prior-use checks remain enforced.
 Do not commit the actual values. Remove the setting after the pilot.
+
+
+### Cody-only Freshdesk scope (required for all intake)
+
+Configure Production `FRESHDESK_API_KEY` privately and `FRESHDESK_CODY_AGENT_ID`
+with Cody Choi's verified Freshdesk agent ID. Never commit or log the API key.
+The service makes GET requests only to chubbyclub.freshdesk.com. Missing access,
+API errors, invalid data, or incomplete history stop processing without a coupon.
+
+Both endpoints load the current ticket and require assignment to Cody before
+classification or member lookup. Webhook text/assignment/reply claims are ignored;
+content comes from the ticket API. All conversation pages are checked, rather
+than the ten-item embedded history. Any reply authored by Cody blocks processing,
+including replies sent via email. His public notes also conservatively block;
+private notes and other agents' replies do not. Skips report `not_assigned_to_cody`
+or `cody_already_replied` without logging message bodies or personal data.
+
+Immediately before the Stripe write, the assignment/history check runs again.
+A changed ticket since verification stops processing. Freshdesk and Stripe do
+not share an atomic transaction: a human reply/reassignment after the final
+check can still race the Stripe update. Coordinate manual handling during rollout.
+
+Keep the Freshdesk trigger limited to Cody Choi and CHUBBY1/Chubby 1 traffic.
+Do not activate broad live traffic until these API-backed checks pass deployed
+AGENTTEST cases (Cody/unreplied, another assignee, and Cody already replied).
+This change does not create a recurring inbox scanner or process old tickets.
+It handles authenticated webhook events; ticket-creation and assignment-update
+rules must be configured explicitly for the desired future events.

@@ -46,6 +46,19 @@ registerHooks({
 const { default: intake } = await import("../api/freshdesk/intake.js");
 const { default: direct } = await import("../api/freshdesk/chubby1.js");
 beforeEach(() => {
+  process.env.FRESHDESK_API_KEY = "fixture-only";
+  process.env.FRESHDESK_CODY_AGENT_ID = "42";
+  globalThis.scopeCalls = 0;
+  globalThis.ticketOverride = null;
+  globalThis.conversations = [];
+  globalThis.fetch = async (url) => {
+    scopeCalls++;
+    if (url.includes("/conversations?")) return { ok: true, json: async () => conversations };
+    const b = globalThis.apiBody;
+    return { ok: true, json: async () => ({ id: Number(b.ticket_id), responder_id: 42,
+      updated_at: "2026-09-28T00:00:00Z", subject: b.subject || "", description_text: b.message || "",
+      requester: { email: b.email || "" }, ...globalThis.ticketOverride }) };
+  };
   delete process.env.CHUBBY1_APPLICATION_MODE;
   delete process.env.CHUBBY1_PILOT_CUSTOMERS;
   delete process.env.CHUBBY1_PILOT_TEST_ACCOUNT;
@@ -66,6 +79,7 @@ async function request(handler, overrides = {}) {
     body: { ticket_id: "123", email: " MEMBER@example.com ", subject: "AGENTTEST", message: "CHUBBY1 promotion. Phone: 626-555-1234" }, ...overrides };
   const res = { statusCode: 200, headers: {}, status(n) { this.statusCode = n; return this; },
     setHeader(k, v) { this.headers[k] = v; return this; }, send(s) { this.body = JSON.parse(s); } };
+  globalThis.apiBody = req.body;
   await handler(req, res);
   return res;
 }
@@ -352,5 +366,49 @@ test("expired/malformed pilot exception fails closed and subscription guard stil
   process.env.CHUBBY1_PILOT_TEST_ACCOUNT = JSON.stringify(config);
   globalThis.subscriptionPages = [{ data: [{ status: "active" }], has_more: false }];
   assert.equal((await request(intake)).body.reason, "active_subscription");
+  assert.equal(writeCalls.length, 0);
+});
+
+for (const handler of [intake, direct]) {
+  test(handler.name + ": other assignees are skipped before classification or Stripe reads", async () => {
+    ticketOverride = { responder_id: 99 };
+    const r = await request(handler);
+    assert.equal(r.body.reason, "not_assigned_to_cody");
+    assert.equal(scopeCalls, 1);
+    assert.equal(stripeCalls.length, 0);
+  });
+  test(handler.name + ": Cody reply blocks all processing", async () => {
+    conversations = [{ id: 10, ticket_id: 123, user_id: 42, source: 0, private: false, incoming: false }];
+    const r = await request(handler);
+    assert.equal(r.body.reason, "cody_already_replied");
+    assert.equal(stripeCalls.length, 0);
+  });
+}
+test("webhook text cannot override current ticket content", async () => {
+  ticketOverride = { subject: "General question", description_text: "Opening hours?", requester: { email: "other@example.com" } };
+  const r = await request(intake);
+  assert.notEqual(r.body.classification.workflow, "chubby1");
+  assert.equal(stripeCalls.length, 0);
+});
+test("late reply prevents coupon mutation", async () => {
+  enablePilot();
+  const original = globalThis.fetch;
+  globalThis.fetch = async url => {
+    if (scopeCalls >= 3) conversations = [{ id: 10, ticket_id: 123, user_id: 42, source: 0, private: false, incoming: false }];
+    return original(url);
+  };
+  const r = await request(intake);
+  assert.equal(r.body.reason, "cody_already_replied");
+  assert.equal(writeCalls.length, 0);
+});
+test("late reassignment prevents coupon mutation", async () => {
+  enablePilot();
+  const original = globalThis.fetch;
+  globalThis.fetch = async url => {
+    if (scopeCalls >= 3) ticketOverride = { responder_id: 99 };
+    return original(url);
+  };
+  const r = await request(intake);
+  assert.equal(r.body.reason, "not_assigned_to_cody");
   assert.equal(writeCalls.length, 0);
 });
