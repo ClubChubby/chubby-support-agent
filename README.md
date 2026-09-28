@@ -267,3 +267,28 @@ AGENTTEST cases (Cody/unreplied, another assignee, and Cody already replied).
 This change does not create a recurring inbox scanner or process old tickets.
 It handles authenticated webhook events; ticket-creation and assignment-update
 rules must be configured explicitly for the desired future events.
+
+### Authorized one-time backlog pass
+
+A one-time pass can use a frozen list of ticket IDs selected from Freshdesk's
+Open / Cody Choi view (all creation dates). Store that list only in private
+Production configuration `CHUBBY1_BACKFILL`, never in this public repository:
+`{runId, requesterId, expiresAt, ticketIds}`. runId is 32 lowercase hex characters;
+requesterId is the operator's test contact; expiresAt is epoch milliseconds at
+most four hours ahead; ticketIds is a unique array of at most 300 numeric strings.
+
+An authenticated webhook for a Cody-assigned, unreplied operator control ticket
+with subject `CHUBBY1 BACKFILL <runId> BATCH <N>` triggers 25 configured IDs per
+batch. The ticket cannot choose targets, extend expiry, or enable the feature.
+The trusted API requester must match configuration. Production live mode is
+required. Each target must STILL be Open, Cody-assigned and unreplied; these
+conditions are checked again immediately before mutation. AGENTTEST tickets
+are skipped, and the owner pilot exception is disabled. Replays retain all
+per-customer idempotency and permanent coupon-history protections.
+
+Requests are paced. Per-ticket outcomes are logged as freshdesk_backfill_result
+with numeric ticket ID and outcome only. No comments, replies, status changes,
+or recurring scans are created. Check that every frozen target has an outcome;
+API failures remain manual review and can be explicitly retried after recovery.
+After completion, set CHUBBY1_BACKFILL to `disabled` and redeploy. Running batches
+also stop on expiry; already-running Stripe calls cannot be atomically canceled.

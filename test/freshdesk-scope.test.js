@@ -86,3 +86,12 @@ test("ticket changes during scanning or between preview and application stop the
   requests = [];
   assert.equal((await checkFreshdeskScope(123)).reason, "not_assigned_to_cody");
 });
+test("one-time scan requires current Open status, including before write", async () => {
+  ticket.status = 3;
+  assert.equal((await checkFreshdeskScope(123, undefined, { requireOpen: true })).reason, "ticket_not_open");
+  ticket.status = 2;
+  const scope = await checkFreshdeskScope(123, undefined, { requireOpen: true });
+  assert.equal(scope.allowed, true);
+  ticket.status = 4;
+  assert.equal((await checkFreshdeskScope(123, scope.revision, { requireOpen: true })).reason, "ticket_not_open");
+});

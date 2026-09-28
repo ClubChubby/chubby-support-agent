@@ -1,7 +1,6 @@
 import { checkFreshdeskScope } from "../../lib/freshdesk-scope.js";
-import { verifyChubby1 } from "../../lib/chubby1.js";
-import { classifyTicket } from "../../lib/classify.js";
-import { applicationEnabled, applyChubby1 } from "../../lib/coupon-application.js";
+import { processScopedTicket } from "../../lib/process-ticket.js";
+import { backfillBatch, runBackfill } from "../../lib/backfill.js";
 
 function json(res, status, body) {
   // Allowlisted outcome fields only: never log payloads, identifiers, or secrets.
@@ -48,25 +47,8 @@ export default async function handler(req, res) {
 
   const scope = await checkFreshdeskScope(ticketId);
   if (!scope.allowed) return json(res, 200, { ok: true, ticketId, status: scope.status, reason: scope.reason, actionTaken: false });
-  const body = scope.body;
-  const { subject, message } = body;
-  const classification = classifyTicket({ subject, message });
-
-  if (classification.workflow === "chubby1") {
-    const result = await verifyChubby1(body, { allowPilotException: true });
-    if (result.body.status === "preview_ready_read_only" &&
-        applicationEnabled(result.body.stripeCustomer.id, subject)) {
-      const applied = await applyChubby1(result.body.stripeCustomer.id, subject, { ticketId, revision: scope.revision });
-      return json(res, 200, { ...result.body, ...applied, classification });
-    }
-    return json(res, result.statusCode, { ...result.body, classification });
-  }
-
-  return json(res, 200, {
-    ok: true,
-    ticketId,
-    classification,
-    actionTaken: false,
-    nextStep: "workflow_not_implemented_yet"
-  });
+  const batch = backfillBatch(scope);
+  if (batch) return json(res, 200, { ...(await runBackfill(batch)), ticketId });
+  const result = await processScopedTicket(scope, { allowPilotException: true });
+  return json(res, result.statusCode, result.body);
 }
