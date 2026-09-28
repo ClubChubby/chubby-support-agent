@@ -48,6 +48,7 @@ const { default: direct } = await import("../api/freshdesk/chubby1.js");
 beforeEach(() => {
   delete process.env.CHUBBY1_APPLICATION_MODE;
   delete process.env.CHUBBY1_PILOT_CUSTOMERS;
+  delete process.env.CHUBBY1_PILOT_TEST_ACCOUNT;
   process.env.WEBHOOK_SECRET = "test-secret";
   process.env.STRIPE_SECRET_KEY = "sk_test_fixture";
   process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([{ email: "member@example.com", phone: "6265551234", eligible: true }]);
@@ -312,5 +313,44 @@ test("live mode skips synthetic AGENTTEST tickets", async () => {
   process.env.CHUBBY1_APPLICATION_MODE = "live";
   const r = await request(intake);
   assert.equal(r.body.status, "preview_ready_read_only");
+  assert.equal(writeCalls.length, 0);
+});
+
+function enableException() {
+  enablePilot();
+  process.env.CHUBBY1_ELIGIBILITY_JSON = "[]";
+  process.env.CHUBBY1_PILOT_TEST_ACCOUNT = JSON.stringify({ email: "member@example.com", phone: "6265551234",
+    stripeCustomerId: "cus_fixture", expiresAt: Date.now() + 3600000 });
+}
+test("explicit private pilot exception works with both identifiers and preserves the list", async () => {
+  enableException();
+  const r = await request(intake);
+  assert.equal(r.body.status, "coupon_applied");
+  assert.equal(r.body.matchedBy, "owner_authorized_pilot");
+  assert.equal(process.env.CHUBBY1_ELIGIBILITY_JSON, "[]");
+});
+test("pilot exception cannot affect direct route, real tickets, live mode, or other accounts", async () => {
+  enableException();
+  assert.equal((await request(direct)).body.status, "not_eligible");
+  assert.equal((await request(intake, { body: { ticket_id: "123", email: "member@example.com", subject: "CHUBBY1", message: "6265551234" } })).body.status, "not_eligible");
+  assert.equal((await request(intake, { body: { ticket_id: "123", email: "member@example.com", subject: "AGENTTEST", message: "CHUBBY1" } })).body.status, "not_eligible");
+  process.env.CHUBBY1_APPLICATION_MODE = "live";
+  assert.equal((await request(intake)).body.status, "not_eligible");
+  process.env.CHUBBY1_APPLICATION_MODE = "pilot";
+  process.env.CHUBBY1_PILOT_CUSTOMERS = "cus_other";
+  assert.equal((await request(intake)).body.status, "not_eligible");
+  assert.equal(writeCalls.length, 0);
+});
+test("expired/malformed pilot exception fails closed and subscription guard still applies", async () => {
+  enableException();
+  const config = JSON.parse(process.env.CHUBBY1_PILOT_TEST_ACCOUNT);
+  for (const value of ["invalid", JSON.stringify({ ...config, expiresAt: Date.now()-1 }),
+    JSON.stringify({ ...config, expiresAt: Date.now()+172800000 })]) {
+    process.env.CHUBBY1_PILOT_TEST_ACCOUNT = value;
+    assert.equal((await request(intake)).body.status, "not_eligible");
+  }
+  process.env.CHUBBY1_PILOT_TEST_ACCOUNT = JSON.stringify(config);
+  globalThis.subscriptionPages = [{ data: [{ status: "active" }], has_more: false }];
+  assert.equal((await request(intake)).body.reason, "active_subscription");
   assert.equal(writeCalls.length, 0);
 });

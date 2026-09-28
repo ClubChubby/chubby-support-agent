@@ -51,7 +51,7 @@ export default async function handler(req, res) {
   const classification = classifyTicket({ subject, message });
 
   if (classification.workflow === "chubby1") {
-    const result = await verifyChubby1(body);
+    const result = await verifyChubby1(body, { allowPilotException: true });
     if (result.body.status === "preview_ready_read_only" &&
         applicationEnabled(result.body.stripeCustomer.id, subject)) {
       const applied = await applyChubby1(result.body.stripeCustomer.id, subject);

@@ -228,3 +228,14 @@ No live activation or app-checkout pilot has been completed by this commit.
 The 66 automated tests mock Stripe and do not prove live write permissions or
 in-app checkout behavior. Past-due and existing-discount rules have automated
 coverage; their dedicated live cases remain pending.
+
+### Owner-authorized one-account test exception
+
+An owner can explicitly authorize a test account outside the promotion list.
+Set private `CHUBBY1_PILOT_TEST_ACCOUNT` to JSON containing `email`, `phone`,
+`stripeCustomerId`, and `expiresAt` (epoch milliseconds, at most 24 hours ahead).
+It only matches production pilot intake with subject exactly AGENTTEST, both
+matching email and phone, and a customer also in CHUBBY1_PILOT_CUSTOMERS.
+It cannot override an ambiguous list match, affect the direct read-only route,
+or run in live mode. Subscription, discount and prior-use checks remain enforced.
+Do not commit the actual values. Remove the setting after the pilot.
