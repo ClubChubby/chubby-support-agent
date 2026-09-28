@@ -2,6 +2,15 @@ import { verifyChubby1 } from "../../lib/chubby1.js";
 import { classifyTicket } from "../../lib/classify.js";
 
 function json(res, status, body) {
+  // Allowlisted outcome fields only: never log payloads, identifiers, or secrets.
+  console.info(JSON.stringify({
+    event: "freshdesk_intake_result",
+    workflow: body.classification?.workflow ?? null,
+    status: body.status ?? (body.ok ? "classified_read_only" : "rejected"),
+    reason: body.reason ?? body.error ?? null,
+    httpStatus: status,
+    actionTaken: false
+  }));
   res.status(status).setHeader("content-type", "application/json");
   res.send(JSON.stringify(body));
 }
