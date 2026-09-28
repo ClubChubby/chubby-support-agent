@@ -292,3 +292,13 @@ or recurring scans are created. Check that every frozen target has an outcome;
 API failures remain manual review and can be explicitly retried after recovery.
 After completion, set CHUBBY1_BACKFILL to `disabled` and redeploy. Running batches
 also stop on expiry; already-running Stripe calls cannot be atomically canceled.
+
+### Promotion request deadline
+
+The original Freshdesk ticket creation time must be before
+2026-09-28T07:00:00Z (September 28 midnight America/Los_Angeles). This honors
+all September 27 Pacific requests, including 23:59:59, and rejects September 28
+and later regardless of when an old request is processed. Missing creation dates
+fail closed. The date is checked before member lookups and again before applying.
+Only the privately configured operator control ticket may be created later to
+trigger a scan; every actual target still obeys the deadline, with no exception.

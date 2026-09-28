@@ -56,7 +56,7 @@ beforeEach(() => {
     if (url.includes("/conversations?")) return { ok: true, json: async () => conversations };
     const b = globalThis.apiBody;
     return { ok: true, json: async () => ({ id: Number(b.ticket_id), responder_id: 42,
-      updated_at: "2026-09-28T00:00:00Z", subject: b.subject || "", description_text: b.message || "",
+      created_at: "2026-09-27T00:00:00Z", updated_at: "2026-09-28T00:00:00Z", subject: b.subject || "", description_text: b.message || "",
       requester: { email: b.email || "" }, ...globalThis.ticketOverride }) };
   };
   delete process.env.CHUBBY1_APPLICATION_MODE;

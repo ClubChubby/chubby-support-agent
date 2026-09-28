@@ -8,7 +8,7 @@ beforeEach(() => {
   process.env.FRESHDESK_API_KEY = "fixture-not-a-secret";
   process.env.FRESHDESK_CODY_AGENT_ID = "42";
   ticket = { id: 123, responder_id: 42, subject: "Chubby 1", description_text: "member@example.com",
-    updated_at: "2026-09-28T00:00:00Z", requester: { email: "sender@example.com" } };
+    created_at: "2026-09-27T00:00:00Z", updated_at: "2026-09-28T00:00:00Z", requester: { email: "sender@example.com" } };
   pages = [[]]; requests = []; fail = false; lateTicket = null;
   globalThis.fetch = async (url, options) => {
     requests.push({ url, options });
@@ -108,4 +108,28 @@ test("backfill skips unrelated and synthetic tickets before reading conversation
   ticket.subject = "AGENTTEST";
   assert.equal((await checkFreshdeskScope(123, undefined, { onlyChubby1: true, requireOpen: true })).reason, "synthetic_test_ticket");
   assert.equal(requests.length, 2);
+});
+test("promotion deadline includes all September 27 Pacific and excludes September 28", async () => {
+  ticket.created_at = "2026-09-28T06:59:59Z";
+  assert.equal((await checkFreshdeskScope(123)).allowed, true);
+  ticket.created_at = "2026-09-28T07:00:00Z";
+  assert.equal((await checkFreshdeskScope(123)).reason, "request_after_promotion_deadline");
+  ticket.created_at = "2026-09-28T15:00:00Z";
+  assert.equal((await checkFreshdeskScope(123)).reason, "request_after_promotion_deadline");
+  delete ticket.created_at;
+  assert.equal((await checkFreshdeskScope(123)).reason, "freshdesk_creation_date_unavailable");
+});
+test("only configured operator control tickets can trigger an older-ticket scan after cutoff", async () => {
+  process.env.VERCEL_ENV = "production"; process.env.CHUBBY1_APPLICATION_MODE = "live";
+  const runId = "c".repeat(32);
+  process.env.CHUBBY1_BACKFILL = JSON.stringify({ runId, requesterId: "99", ticketIds: ["1"], expiresAt: Date.now()+3600000 });
+  ticket.created_at = "2026-09-29T00:00:00Z";
+  ticket.requester_id = 99;
+  ticket.subject = `CHUBBY1 BACKFILL ${runId} BATCH 1`;
+  assert.equal((await checkFreshdeskScope(123, undefined, { allowBackfillControl: true })).allowed, true);
+  assert.equal((await checkFreshdeskScope(123)).reason, "request_after_promotion_deadline");
+  assert.equal((await checkFreshdeskScope(123, undefined, { requireOpen: true })).reason, "request_after_promotion_deadline");
+  ticket.requester_id = 100;
+  assert.equal((await checkFreshdeskScope(123, undefined, { allowBackfillControl: true })).reason, "request_after_promotion_deadline");
+  delete process.env.CHUBBY1_BACKFILL;
 });

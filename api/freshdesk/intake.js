@@ -45,7 +45,7 @@ export default async function handler(req, res) {
     });
   }
 
-  const scope = await checkFreshdeskScope(ticketId);
+  const scope = await checkFreshdeskScope(ticketId, undefined, { allowBackfillControl: true });
   if (!scope.allowed) return json(res, 200, { ok: true, ticketId, status: scope.status, reason: scope.reason, actionTaken: false });
   const batch = backfillBatch(scope);
   if (batch) return json(res, 200, { ...(await runBackfill(batch)), ticketId });
