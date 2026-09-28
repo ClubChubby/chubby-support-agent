@@ -71,3 +71,25 @@ Each workflow gets its own rules, permissions, integrations, and safety limits.
 ## Safety
 
 The agent should use deterministic rules for consequential actions such as eligibility, refunds, discounts, and account changes. AI can classify or interpret messages, but sensitive actions must follow explicit workflow rules and approval thresholds.
+
+## Intake verification and testing
+
+The intake endpoint runs the shared CHUBBY1 verification internally when the
+classifier selects `chubby1`. It returns the classification alongside
+`verified_read_only`, `not_eligible`, or `manual_review`, with
+`actionTaken: false`. Other workflows remain classification-only.
+Both endpoints still require `WEBHOOK_SECRET`.
+
+Run `npm test` with Node.js 24 or later. Tests mock the Stripe SDK boundary;
+they do not contact Stripe or Freshdesk.
+
+After deployment, create a Freshdesk ticket with subject exactly `AGENTTEST`
+and mention `CHUBBY1` in the body. Use the existing eligible test sender email
+and phone. Expect `verified_read_only` only when exactly one Stripe customer
+matches the sender email. A noneligible identifier returns `not_eligible`;
+missing or multiple Stripe matches return `manual_review`.
+Phone-only eligibility cannot locate a Stripe customer in this version.
+
+Check the webhook response as well as the HTTP status: HTTP 200 can also mean
+`manual_review` or `not_eligible`. No coupon, Stripe mutation, Freshdesk reply,
+or ticket resolution occurs.

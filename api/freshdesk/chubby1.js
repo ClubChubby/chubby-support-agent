@@ -1,6 +1,4 @@
-import { extractPhones, normalizeEmail } from "../../lib/normalize.js";
-import { findEligibility } from "../../lib/eligibility.js";
-import { findStripeCustomers } from "../../lib/stripe.js";
+import { verifyChubby1 } from "../../lib/chubby1.js";
 
 function json(res, status, body) {
   res.status(status).setHeader("content-type", "application/json");
@@ -23,72 +21,6 @@ export default async function handler(req, res) {
     return json(res, 401, { ok: false, error: "unauthorized" });
   }
 
-  const body = req.body || {};
-  const ticketId = body.ticket_id ?? null;
-  const email = normalizeEmail(body.email || "");
-  const combinedText = [body.subject, body.message].filter(Boolean).join("\n");
-  const phones = extractPhones(combinedText);
-
-  if (!ticketId || (!email && phones.length === 0)) {
-    return json(res, 400, {
-      ok: false,
-      status: "manual_review",
-      reason: "missing_ticket_or_customer_identifier"
-    });
-  }
-
-  let eligibility;
-  try {
-    eligibility = findEligibility({ email, phones });
-  } catch (error) {
-    return json(res, 500, {
-      ok: false,
-      status: "manual_review",
-      reason: "eligibility_configuration_error"
-    });
-  }
-
-  if (!eligibility.matched) {
-    return json(res, 200, {
-      ok: true,
-      ticketId,
-      status: "not_eligible",
-      matchedBy: null,
-      stripeCustomers: []
-    });
-  }
-
-  let stripeCustomers = [];
-  try {
-    stripeCustomers = await findStripeCustomers({ email, phones });
-  } catch (error) {
-    return json(res, 200, {
-      ok: true,
-      ticketId,
-      status: "manual_review",
-      matchedBy: eligibility.matchedBy,
-      reason: "stripe_lookup_failed",
-      stripeCustomers: []
-    });
-  }
-
-  if (stripeCustomers.length !== 1) {
-    return json(res, 200, {
-      ok: true,
-      ticketId,
-      status: "manual_review",
-      matchedBy: eligibility.matchedBy,
-      reason: stripeCustomers.length === 0 ? "stripe_customer_not_found" : "multiple_stripe_customers",
-      stripeCustomers
-    });
-  }
-
-  return json(res, 200, {
-    ok: true,
-    ticketId,
-    status: "verified_read_only",
-    matchedBy: eligibility.matchedBy,
-    stripeCustomer: stripeCustomers[0],
-    actionTaken: false
-  });
+  const result = await verifyChubby1(req.body || {});
+  return json(res, result.statusCode, result.body);
 }

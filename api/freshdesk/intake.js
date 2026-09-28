@@ -1,3 +1,4 @@
+import { verifyChubby1 } from "../../lib/chubby1.js";
 import { classifyTicket } from "../../lib/classify.js";
 
 function json(res, status, body) {
@@ -36,14 +37,16 @@ export default async function handler(req, res) {
 
   const classification = classifyTicket({ subject, message });
 
+  if (classification.workflow === "chubby1") {
+    const result = await verifyChubby1(body);
+    return json(res, result.statusCode, { ...result.body, classification });
+  }
+
   return json(res, 200, {
     ok: true,
     ticketId,
     classification,
     actionTaken: false,
-    nextStep:
-      classification.workflow === "chubby1"
-        ? "route_to_chubby1_workflow"
-        : "workflow_not_implemented_yet"
+    nextStep: "workflow_not_implemented_yet"
   });
 }
