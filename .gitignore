@@ -3,3 +3,9 @@ node_modules
 .env
 .env.*
 !.env.example
+# Private imports and encryption material must never enter source control.
+*.csv
+*.key
+*eligibility-key*
+*approved-members*
+*.pem

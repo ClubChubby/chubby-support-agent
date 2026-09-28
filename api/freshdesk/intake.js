@@ -8,6 +8,8 @@ function json(res, status, body) {
     workflow: body.classification?.workflow ?? null,
     status: body.status ?? (body.ok ? "classified_read_only" : "rejected"),
     reason: body.reason ?? body.error ?? null,
+    previewEligible: body.preview?.eligible ?? null,
+    couponId: body.preview?.couponId ?? null,
     httpStatus: status,
     actionTaken: false
   }));

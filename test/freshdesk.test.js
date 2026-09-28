@@ -5,10 +5,13 @@ import { registerHooks } from "node:module";
 // Mock only the Stripe SDK boundary; exercise the real routes and shared logic.
 registerHooks({
   resolve(specifier, context, next) {
+    if (specifier.endsWith("/approved-list.js")) return { url: "mock:allowlist", shortCircuit: true };
     if (specifier === "stripe") return { url: "mock:stripe", shortCircuit: true };
     return next(specifier, context);
   },
   load(url, context, next) {
+    if (url === "mock:allowlist") return { format: "module", shortCircuit: true,
+      source: 'export function loadApprovedRecords() { const rows = JSON.parse(process.env.CHUBBY1_ELIGIBILITY_JSON); if (!Array.isArray(rows)) throw new Error("invalid"); return rows; }' };
     if (url === "mock:stripe") return {
       format: "module", shortCircuit: true,
       source: `export default class Stripe {
@@ -22,6 +25,15 @@ registerHooks({
           return globalThis.stripeData[0];
         }};
 
+        coupons = { retrieve: async (id) => {
+          globalThis.previewCalls.push({ coupon: id });
+          if (globalThis.previewError) throw new Error("preview failed");
+          return globalThis.testCoupon;
+        }};
+        subscriptions = { list: async (params) => {
+          globalThis.previewCalls.push({ subscriptions: params });
+          return globalThis.subscriptionPages[params.starting_after ? 1 : 0];
+        }};
       }`
     };
     return next(url, context);
@@ -36,6 +48,10 @@ beforeEach(() => {
   globalThis.stripeCalls = [];
   globalThis.stripeData = [{ id: "cus_fixture", email: "member@example.com", phone: "+1 626 555 1234" }];
   globalThis.stripeError = false;
+  globalThis.previewCalls = [];
+  globalThis.previewError = false;
+  globalThis.testCoupon = { id: "9MSuudHO", valid: true, amount_off: 8700, currency: "usd", percent_off: null, duration: "once" };
+  globalThis.subscriptionPages = [{ data: [], has_more: false }];
 });
 async function request(handler, overrides = {}) {
   const req = { method: "POST", headers: { "x-chubby-webhook-secret": "test-secret" },
@@ -49,10 +65,10 @@ for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
   test(name + ": verified and read-only", async () => {
     const r = await request(handler);
     assert.equal(r.statusCode, 200);
-    assert.equal(r.body.status, "verified_read_only");
+    assert.equal(r.body.status, "preview_ready_read_only");
     assert.equal(r.body.actionTaken, false);
     assert.equal(r.body.stripeCustomer.phoneMatch, true);
-    assert.deepEqual(stripeCalls, [{ email: "member@example.com", limit: 10 }]);
+    assert.deepEqual(stripeCalls, [{ email: "member@example.com", limit: 10 }, { retrieve: "cus_fixture" }]);
     if (name === "intake") assert.equal(r.body.classification.workflow, "chubby1");
   });
   test(name + ": authentication and method guards prevent lookups", async () => {
@@ -102,21 +118,21 @@ for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
   test(name + ": phone-only ticket resolves the approved record email", async () => {
     const r = await request(handler, { body: { ticket_id: "123", message: "CHUBBY1 626-555-1234" } });
     assert.equal(r.body.matchedBy, "phone");
-    assert.equal(r.body.status, "verified_read_only");
-    assert.deepEqual(stripeCalls, [{ email: "member@example.com", limit: 10 }]);
+    assert.equal(r.body.status, "preview_ready_read_only");
+    assert.deepEqual(stripeCalls, [{ email: "member@example.com", limit: 10 }, { retrieve: "cus_fixture" }]);
   });
   test(name + ": another sender can name an approved account", async () => {
     for (const message of ["Chubby 1 <MEMBER@EXAMPLE.COM>.", "CHUBBY1 626-555-1234"]) {
       globalThis.stripeCalls = [];
       const r = await request(handler, { body: { ticket_id: "123", email: "sender@example.com", message, stripeCustomerId: "cus_untrusted" } });
-      assert.equal(r.body.status, "verified_read_only");
+      assert.equal(r.body.status, "preview_ready_read_only");
       assert.equal(r.body.stripeCustomer.id, "cus_fixture");
-      assert.deepEqual(stripeCalls, [{ email: "member@example.com", limit: 10 }]);
+      assert.deepEqual(stripeCalls, [{ email: "member@example.com", limit: 10 }, { retrieve: "cus_fixture" }]);
     }
   });
   test(name + ": email in subject works without a requester email", async () => {
     const r = await request(handler, { body: { ticket_id: "123", subject: "Chubby 1 MEMBER@EXAMPLE.COM", message: "" } });
-    assert.equal(r.body.status, "verified_read_only");
+    assert.equal(r.body.status, "preview_ready_read_only");
   });
   test(name + ": conflicting approved records never query Stripe", async () => {
     process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([
@@ -134,7 +150,7 @@ for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
     process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([{ email: "member@example.com", stripeCustomerId: "cus_approved", eligible: true }]);
     globalThis.stripeData = [{ id: "cus_approved", email: "changed@example.com" }];
     assert.equal((await request(handler)).body.stripeCustomer.id, "cus_approved");
-    assert.deepEqual(stripeCalls, [{ retrieve: "cus_approved" }]);
+    assert.deepEqual(stripeCalls, [{ retrieve: "cus_approved" }, { retrieve: "cus_approved" }]);
     globalThis.stripeData = [{ id: "cus_approved", deleted: true }];
     assert.equal((await request(handler)).body.reason, "stripe_customer_not_found");
     globalThis.stripeError = "resource_missing";
@@ -145,8 +161,8 @@ for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
   });
   test(name + ": phone record may resolve by approved ID without an email", async () => {
     process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([{ phone: "6265551234", stripeCustomerId: "cus_fixture", eligible: true }]);
-    assert.equal((await request(handler)).body.status, "verified_read_only");
-    assert.deepEqual(stripeCalls, [{ retrieve: "cus_fixture" }]);
+    assert.equal((await request(handler)).body.status, "preview_ready_read_only");
+    assert.deepEqual(stripeCalls, [{ retrieve: "cus_fixture" }, { retrieve: "cus_fixture" }]);
   });
   test(name + ": incomplete or malformed approved destination requires review", async () => {
     for (const [row, reason] of [
@@ -162,6 +178,82 @@ for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
     process.env.CHUBBY1_ELIGIBILITY_JSON = JSON.stringify([{ email: "member@example.com", eligible: false }]);
     assert.equal((await request(handler)).body.status, "not_eligible");
     assert.equal(stripeCalls.length, 0);
+  });
+
+  test(name + ": active blocks even if canceling at period end", async () => {
+    globalThis.subscriptionPages = [{ data: [{ id: "sub_active", status: "active", cancel_at_period_end: true }], has_more: false }];
+    const r = await request(handler);
+    assert.equal(r.body.status, "not_eligible");
+    assert.equal(r.body.reason, "active_subscription");
+    assert.equal(r.body.actionTaken, false);
+  });
+  test(name + ": past due allowed; trialing and unspecified states require review", async () => {
+    for (const status of ["past_due", "trialing", "paused", "unpaid", "incomplete"]) {
+      globalThis.subscriptionPages = [{ data: [{ id: "sub_test", status }], has_more: false }];
+      const r = await request(handler);
+      assert.equal(r.body.status, status === "past_due" ? "preview_ready_read_only" : "manual_review");
+    }
+  });
+  test(name + ": customer, subscription and item discounts require review", async () => {
+    globalThis.stripeData[0].discount = { id: "di_existing" };
+    assert.equal((await request(handler)).body.reason, "existing_discount");
+    delete globalThis.stripeData[0].discount;
+    for (const extra of [{ discounts: ["di_existing"] }, { items: { data: [{ discounts: ["di_existing"] }] } }]) {
+      globalThis.subscriptionPages = [{ data: [{ id: "sub_test", status: "past_due", ...extra }], has_more: false }];
+      assert.equal((await request(handler)).body.reason, "existing_discount");
+    }
+  });
+  test(name + ": validates coupon value, validity and product limits", async () => {
+    for (const [extra, reason] of [
+      [{ amount_off: 8600 }, "coupon_value_mismatch"],
+      [{ currency: "cad" }, "coupon_value_mismatch"],
+      [{ percent_off: 50 }, "coupon_value_mismatch"],
+      [{ valid: false }, "coupon_unavailable"],
+      [{ applies_to: { products: ["prod_limited"] } }, "coupon_product_restriction"]
+    ]) {
+      const saved = globalThis.testCoupon;
+      globalThis.testCoupon = { ...saved, ...extra };
+      assert.equal((await request(handler)).body.reason, reason);
+      globalThis.testCoupon = saved;
+    }
+    globalThis.previewError = true;
+    assert.equal((await request(handler)).body.reason, "stripe_preview_lookup_failed");
+  });
+  test(name + ": checks later subscription pages and scopes reads to approved account", async () => {
+    globalThis.subscriptionPages = [
+      { data: [{ id: "sub_old", status: "canceled" }], has_more: true },
+      { data: [{ id: "sub_active", status: "active" }], has_more: false }
+    ];
+    assert.equal((await request(handler)).body.reason, "active_subscription");
+    assert.deepEqual(previewCalls.filter(c => c.subscriptions).map(c => c.subscriptions), [
+      { customer: "cus_fixture", status: "all", limit: 100 },
+      { customer: "cus_fixture", status: "all", limit: 100, starting_after: "sub_old" }
+    ]);
+  });
+  test(name + ": repeated preview has no side effects and does not claim redemption checks", async () => {
+    const first = await request(handler);
+    const second = await request(handler);
+    assert.deepEqual(first.body, second.body);
+    assert.equal(first.body.preview.couponId, "9MSuudHO");
+    assert.equal(first.body.preview.redemptionHistoryChecked, false);
+    assert.equal(first.body.preview.applicationMethod, "not_selected");
+    assert.equal(first.body.actionTaken, false);
+  });
+
+  test(name + ": incomplete subscription/item reads never qualify", async () => {
+    globalThis.subscriptionPages = [{ data: [], has_more: true }];
+    assert.equal((await request(handler)).body.reason, "subscription_scan_incomplete");
+    globalThis.subscriptionPages = [{ data: [{ id: "sub_due", status: "past_due", items: { data: [], has_more: true } }], has_more: false }];
+    assert.equal((await request(handler)).body.reason, "subscription_items_incomplete");
+  });
+  test(name + ": ended subscriptions and historical discounts do not disqualify", async () => {
+    globalThis.subscriptionPages = [{ data: [
+      { id: "sub_old", status: "canceled", discounts: ["di_historical"] },
+      { id: "sub_expired", status: "incomplete_expired" }
+    ], has_more: false }];
+    const r = await request(handler);
+    assert.equal(r.body.status, "preview_ready_read_only");
+    assert.equal(r.body.preview.eligible, true);
   });
 
 }
