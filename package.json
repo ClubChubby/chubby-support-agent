@@ -1,0 +1,12 @@
+{
+  "name": "chubby-support-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "stripe": "^18.0.0"
+  }
+}
