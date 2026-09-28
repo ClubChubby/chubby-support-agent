@@ -2,8 +2,30 @@
 
 Cloud automation for Chubby Club support workflows.
 
-## CHUBBY1 v0
+## Purpose
 
+This project is a broader **Chubby Support Agent** that can classify, investigate, draft, and eventually resolve different customer-support requests.
+
+CHUBBY1 is the first production workflow, not the limit of the system.
+
+## Initial capabilities
+
+### 1. General support intake
+Every incoming Freshdesk ticket can be classified into a workflow such as:
+
+- CHUBBY1 promotion
+- Membership cancellation
+- Billing / duplicate charge
+- Refund request
+- Account access
+- Membership benefits question
+- Promotion eligibility
+- Location / restaurant issue
+- App issue
+- General FAQ
+- Unknown / manual review
+
+### 2. CHUBBY1 workflow
 Current mode: **read-only verification**.
 
 The first workflow:
@@ -16,35 +38,36 @@ The first workflow:
 6. Returns a verification result.
 7. **Does not apply a coupon, change Stripe, or reply to Freshdesk yet.**
 
+## Architecture
+
+```
+Freshdesk
+   ↓
+Support intake / classifier
+   ↓
+Workflow router
+   ├── CHUBBY1
+   ├── Billing
+   ├── Cancellation
+   ├── Refund
+   ├── Account access
+   ├── Benefits / FAQ
+   └── Manual review
+```
+
+Each workflow gets its own rules, permissions, integrations, and safety limits.
+
 ## Required environment variables
 
-- `WEBHOOK_SECRET` - shared secret expected in the `x-chubby-webhook-secret` header.
-- `STRIPE_SECRET_KEY` - use a restricted Stripe key with read-only customer access for v0.
-- `CHUBBY1_ELIGIBILITY_JSON` - JSON array of eligible records.
+- `WEBHOOK_SECRET`
+- `STRIPE_SECRET_KEY`
+- `CHUBBY1_ELIGIBILITY_JSON`
 
-Example:
+## Endpoints
 
-```json
-[
-  {"email":"person@example.com","phone":"6265551234","eligible":true}
-]
-```
-
-## Endpoint
-
-`POST /api/freshdesk/chubby1`
-
-Expected JSON fields:
-
-```json
-{
-  "ticket_id": 12345,
-  "email": "person@example.com",
-  "subject": "CHUBBY1",
-  "message": "My phone is (626) 555-1234"
-}
-```
+- `POST /api/freshdesk/intake` — general support intake/router
+- `POST /api/freshdesk/chubby1` — CHUBBY1 workflow
 
 ## Safety
 
-If eligibility does not match, Stripe returns multiple plausible customers, or the request is malformed, the workflow stops and reports manual review.
+The agent should use deterministic rules for consequential actions such as eligibility, refunds, discounts, and account changes. AI can classify or interpret messages, but sensitive actions must follow explicit workflow rules and approval thresholds.
