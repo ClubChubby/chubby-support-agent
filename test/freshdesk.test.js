@@ -83,6 +83,22 @@ async function request(handler, overrides = {}) {
   await handler(req, res);
   return res;
 }
+test("inferred comeback offer uses the same eligibility and Stripe verification", async () => {
+  const body = { ticket_id: "123", email: "member@example.com", subject: "Membership offer",
+    message: "A text offered my membership back for 1$ but the code failed." };
+  const r = await request(intake, { body });
+  assert.equal(r.body.classification.workflow, "chubby1");
+  assert.equal(r.body.status, "preview_ready_read_only");
+  assert.equal(r.body.actionTaken, false);
+  assert.equal(writeCalls.length, 0);
+  process.env.CHUBBY1_ELIGIBILITY_JSON = "[]";
+  stripeCalls.length = 0;
+  const denied = await request(intake, { body });
+  assert.equal(denied.body.status, "not_eligible");
+  assert.equal(stripeCalls.length, 0);
+  assert.equal(writeCalls.length, 0);
+});
+
 for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
   test(name + ": verified and read-only", async () => {
     const r = await request(handler);
