@@ -31,7 +31,7 @@ Current mode: **read-only verification**.
 The first workflow:
 
 1. Receives a Freshdesk webhook.
-2. Extracts the sender email and any phone number in the ticket content.
+2. Extracts emails and phones from the ticket content and also considers the requester email.
 3. Normalizes both identifiers.
 4. Checks the CHUBBY1 eligibility list.
 5. Looks for a matching Stripe customer.
@@ -86,9 +86,40 @@ they do not contact Stripe or Freshdesk.
 After deployment, create a Freshdesk ticket with subject exactly `AGENTTEST`
 and mention `CHUBBY1` in the body. Use the existing eligible test sender email
 and phone. Expect `verified_read_only` only when exactly one Stripe customer
-matches the sender email. A noneligible identifier returns `not_eligible`;
+matches the approved eligibility record. A noneligible identifier returns `not_eligible`;
 missing or multiple Stripe matches return `manual_review`.
-Phone-only eligibility cannot locate a Stripe customer in this version.
+A phone in the ticket can select an approved record; that record must contain
+an email or `stripeCustomerId` to locate the Stripe account. The sender need
+not own the approved account.
+
+## Approved account matching
+
+All emails and phones from the subject/description, plus the requester email,
+are compared with rows having `eligible: true`. Exactly one matching row is
+required. Multiple matching rows (including duplicates or a sender and recipient
+who each have their own approved row) return `multiple_eligible_records` for
+manual review, without contacting Stripe.
+
+Stripe lookup uses only the matched row's `stripeCustomerId` (preferred), or
+its normalized `email` when no ID is configured. Ticket-provided Stripe IDs
+are ignored. Missing/deleted IDs never fall back to another account.
+An approved phone-only row without either destination identifier returns
+`approved_account_identifier_missing`. Invalid configured IDs return
+`invalid_approved_stripe_customer_id`.
+
+Example eligibility row:
+```json
+{"email":"approved@example.com","phone":"6265551234","stripeCustomerId":"cus_approved","eligible":true}
+```
+The ID is optional; replace example values with the approved account's real
+details. No environment changes are required for existing rows with emails.
+
+For an on-behalf test, use a requester absent from the list and put an approved
+record's email or phone in a new AGENTTEST ticket containing CHUBBY1 or Chubby 1.
+Expect `verified_read_only` for the approved account, not the requester.
+Then test conflicting approved records (`manual_review`) and unlisted
+identifiers (`not_eligible`). Use `{{ticket.description_text}}` as the
+creation webhook's message field. All actions remain read-only.
 
 Check the webhook response as well as the HTTP status: HTTP 200 can also mean
 `manual_review` or `not_eligible`. No coupon, Stripe mutation, Freshdesk reply,
