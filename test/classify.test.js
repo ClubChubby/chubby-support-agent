@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { classifyTicket } from "../lib/classify.js";
 
+test("screens a short one-dollar promo subject with an image-only offer", () => {
+  for (const subject of ["$1 Promo", "Re: $1 Promo", "Fwd: RE: $1.00 Promotion", "1$ offer", "One-dollar promo code"]) {
+    assert.equal(classifyTicket({ subject, message:
+      "I received the following text message and the code was not valid. Was this a fake message?"
+    }).workflow, "chubby1", subject);
+  }
+});
+
+test("short promo subjects preserve amount, unrelated-offer and conflicting-intent checks", () => {
+  for (const subject of ["$10 Promo", "$1.99 Promo", "$1,000 Promo", "$11 Promo", "Promo", "$1 restaurant promo"]) {
+    assert.notEqual(classifyTicket({ subject, message: "The code is invalid" }).workflow, "chubby1", subject);
+  }
+  for (const message of ["Please refund this offer", "Cancel my membership", "This is an unauthorized charge", "My ONEPLUS code failed", "This is a restaurant coupon", "A $1 birthday meal offer"]) {
+    assert.notEqual(classifyTicket({ subject: "$1 Promo", message }).workflow, "chubby1", message);
+  }
+});
+
 test("recognizes a membership comeback text without the coupon name", () => {
   assert.equal(classifyTicket({ subject: "Trouble redeeming 1$ code", message:
     "A text offered my membership back for 1$. I tried before the deadline but the offer did not work."
