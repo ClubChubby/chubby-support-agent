@@ -30,6 +30,23 @@ test("keeps vague promotions and unrelated amounts out of automatic campaign rou
   ]) assert.notEqual(classifyTicket({ message }).workflow, "chubby1", message);
 });
 
+test("screens standalone PLUS renewal, resubscription and purchase requests for one dollar", () => {
+  for (const message of [
+    "I received an SMS asking me to renew my PLUS with $1 with a promo code. The code is not valid.",
+    "I am renewing PLUS for $1", "Can I resubscribe to PLUS for $1?",
+    "I am resubscribing to Plus for 1$", "How do I re-subscribe to PLUS for one dollar?",
+    "I want to purchase PLUS for $1", "Purchasing Plus for $1.00 does not work",
+    "Can I buy Plus for one-dollar?", "I am buying PLUS for 1 dollar",
+    "I want to sign up for PLUS for $1"
+  ]) assert.equal(classifyTicket({ message }).workflow, "chubby1", message);
+  assert.equal(classifyTicket({ subject: "PLUS renewal", message: "The $1 offer failed" }).workflow, "chubby1");
+  for (const message of [
+    "I am renewing PLUS for $58", "Purchase PLUS for $10", "Resubscribe to PLUS for $1.99",
+    "Renew my PLUS", "I paid $58 plus $1 tax", "Please refund my purchase of PLUS for $1",
+    "Cancel my PLUS after the $1 offer"
+  ]) assert.notEqual(classifyTicket({ message }).workflow, "chubby1", message);
+});
+
 test("retains direct code and existing workflow behavior", () => {
   for (const message of ["CHUBBY1", "chubby 1", "Chubby   1 is not working"])
     assert.equal(classifyTicket({ message }).workflow, "chubby1");

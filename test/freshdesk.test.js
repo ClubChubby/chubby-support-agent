@@ -99,6 +99,21 @@ test("inferred comeback offer uses the same eligibility and Stripe verification"
   assert.equal(writeCalls.length, 0);
 });
 
+test("PLUS purchase screening still requires an approved record and checks subscriptions", async () => {
+  const body = { ticket_id: "123", email: "member@example.com", subject: "PLUS purchase",
+    message: "I want to purchase PLUS for $1" };
+  let r = await request(intake, { body });
+  assert.equal(r.body.classification.workflow, "chubby1");
+  assert.equal(r.body.status, "preview_ready_read_only");
+  subscriptionPages = [{ data: [{ id: "sub_active", status: "active" }], has_more: false }];
+  r = await request(intake, { body });
+  assert.equal(r.body.reason, "active_subscription");
+  process.env.CHUBBY1_ELIGIBILITY_JSON = "[]";
+  r = await request(intake, { body });
+  assert.equal(r.body.status, "not_eligible");
+  assert.equal(writeCalls.length, 0);
+});
+
 for (const [name, handler] of [["intake", intake], ["direct", direct]]) {
   test(name + ": verified and read-only", async () => {
     const r = await request(handler);
