@@ -468,3 +468,14 @@ test("verified batch account still requires list eligibility and subscription ch
   assert.equal(writeCalls[0].id, "cus_fixture");
   delete process.env.CHUBBY1_BACKFILL;
 });
+
+test("phone in requester follow-up qualifies even when sender email is absent from approved list", async () => {
+  ticketOverride = { requester_id: 99 };
+  conversations = [{ id: 10, ticket_id: 123, user_id: 99, source: 0, private: false, incoming: true,
+    body_text: "My phone number is +1 (626) 555-1234" }];
+  const r = await request(intake, { body: { ticket_id: "123", email: "different@example.com",
+    subject: "Code did not work", message: "CHUBBY1 did not work" } });
+  assert.equal(r.body.status, "preview_ready_read_only");
+  assert.equal(r.body.matchedBy, "phone");
+  assert.equal(writeCalls.length, 0);
+});

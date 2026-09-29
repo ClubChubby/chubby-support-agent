@@ -133,3 +133,39 @@ test("only configured operator control tickets can trigger an older-ticket scan 
   assert.equal((await checkFreshdeskScope(123, undefined, { allowBackfillControl: true })).reason, "request_after_promotion_deadline");
   delete process.env.CHUBBY1_BACKFILL;
 });
+
+test("requester phone supplied on a later conversation page reaches eligibility input", async () => {
+  ticket.requester_id = 99;
+  pages = [Array.from({ length: 30 }, (_, i) => conversation(i + 1, { body_text: "Thanks" })),
+    [conversation(31, { body_text: "My phone is +1 (626) 555-1234" })]];
+  const r = await checkFreshdeskScope(123);
+  assert.equal(r.allowed, true);
+  assert.ok(r.body.message.includes("6265551234"));
+});
+
+test("agent replies, private notes and other contacts cannot supply account identifiers", async () => {
+  ticket.requester_id = 99;
+  pages = [[
+    conversation(1, { user_id: 88, body_text: "6265551111" }),
+    conversation(2, { incoming: false, body_text: "6265552222" }),
+    conversation(3, { private: true, body_text: "6265553333" }),
+    conversation(4, { source: 2, body_text: "6265554444" }),
+    conversation(5, { body_text: "Use +1 (626) 555-1234 or approved@example.com" })
+  ]];
+  const r = await checkFreshdeskScope(123);
+  assert.equal(r.body.message, ticket.description_text + "\n6265551234\napproved@example.com");
+});
+
+test("editing a requester identifier invalidates the write revision even without ticket timestamp change", async () => {
+  ticket.requester_id = 99;
+  pages = [[conversation(1, { body_text: "6265551234" })]];
+  const r = await checkFreshdeskScope(123);
+  pages[0][0].body_text = "6265559999";
+  assert.equal((await checkFreshdeskScope(123, r.revision)).reason, "freshdesk_ticket_changed");
+});
+
+test("missing requester reply text requires review rather than a false eligibility rejection", async () => {
+  ticket.requester_id = 99;
+  pages = [[conversation(1)]];
+  assert.equal((await checkFreshdeskScope(123)).reason, "freshdesk_history_incomplete");
+});
