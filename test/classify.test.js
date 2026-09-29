@@ -71,3 +71,16 @@ test("retains direct code and existing workflow behavior", () => {
   assert.equal(classifyTicket({ message: "Please refund my charge" }).workflow, "billing");
   assert.equal(classifyTicket({ message: "My membership discount is missing" }).workflow, "membership_benefits");
 });
+
+
+test("recognizes joining again and a one-dollar amount followed by sentence punctuation", () => {
+  assert.equal(classifyTicket({ subject: "Issue with Promo Code", message:
+    "I got a text message inviting me to join the Chubby Club plus membership again for $1. I tried to redeem it but got an error."
+  }).workflow, "chubby1");
+  for (const message of ["I want to join PLUS again for $1", "My membership promo is $1. Please help", "Renew PLUS for $1.00."]) {
+    assert.equal(classifyTicket({ message }).workflow, "chubby1", message);
+  }
+  for (const message of ["Join PLUS again for $1.99", "Renew PLUS for $1,000", "Join PLUS again for $10"]) {
+    assert.notEqual(classifyTicket({ message }).workflow, "chubby1", message);
+  }
+});
