@@ -185,22 +185,27 @@ Release configuration (private Vercel Production environment only):
 
 Before a mutation the agent scans paginated subscription and invoice history
 for prior CHUBBY1 use, and repeats current customer/coupon/subscription checks.
-Unexpanded, failed, or incomplete history is manual review. Historical CHUBBY1
-attachments, including void invoices, conservatively require review.
+Unexpanded, failed, or incomplete history is manual review. Paid CHUBBY1 invoices
+block repeat redemption, including purchases later refunded. Confirmed unpaid
+attempts (draft/open/void invoices with zero paid and no payment in progress) do
+not count as redemption. Historical subscription attachments require matching
+invoice evidence; an attachment alone does not prove a completed purchase.
 Other existing discounts are never deliberately replaced.
 
 One Stripe customer update writes both the coupon and permanent metadata key
-`chubby1_202609_applied=9MSuudHO:v1`. A deterministic, hashed idempotency key
-is identical across tickets. Stripe handles concurrent retries; the permanent
-marker prevents later reapplication after the discount is consumed and the
-Stripe idempotency cache expires. Do not remove this marker. No personal data
+`chubby1_202609_applied=9MSuudHO:v1` for the first application. If that discount
+is gone, a confirmed unpaid attempt can advance the marker to `9MSuudHO:v2:N`.
+A deterministic, hashed idempotency key is identical across tickets for each
+application generation, but differs for a verified reapplication. Missing
+payment evidence cannot bypass the marker. Do not remove this marker. No personal data
 is placed in the idempotency key or metadata. Pre-existing metadata is preserved.
 External administrators can still change the account between the final read
 and the update: Stripe customer updates do not provide a conditional write.
 Coordinate manual coupon edits during the pilot.
 
 Success: `coupon_applied`, `actionTaken:true`. A previous agent marker returns
-`already_applied` without another write when the application function is reached.
+`already_applied` without another write only while the campaign coupon remains
+attached. Otherwise payment history must establish whether reapplication is safe.
 The intake may instead report `existing_discount` if that earlier guard stops it.
 An uncertain mutation is `manual_review`, `application_outcome_unknown`,
 `actionTaken:null`; inspect Stripe before any manual retry. Do not change the

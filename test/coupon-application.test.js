@@ -95,7 +95,7 @@ test("consumed discount and expired Stripe idempotency cache cannot trigger a se
   customer.discount = null;
   keys.clear();
   const retry = await run();
-  assert.equal(retry.status, "already_applied");
+  assert.equal(retry.reason, "redemption_history_unavailable");
   assert.equal(retry.actionTaken, false);
   assert.equal(mutations, 1);
 });
@@ -138,13 +138,14 @@ test("current subscription discount blocks application", async () => {
   assert.equal(attempts.length, 0);
 });
 test("prior coupon on historical subscription blocks repeat redemption", async () => {
-  subs.data = [{ status: "canceled", discount: discount() }];
+  subs.data = [{ id: "sub_old", status: "canceled", discount: discount() }];
+  invoicePages = [{ data: [{ id: "in_paid", status: "paid", subscription: "sub_old", discounts: [discount()] }], has_more: false }];
   assert.equal((await run()).reason, "coupon_previously_used");
   assert.equal(attempts.length, 0);
 });
 test("prior coupon on a later invoice page blocks application", async () => {
   invoicePages = [{ data: [{ id: "in_first" }], has_more: true },
-    { data: [{ id: "in_second", discounts: [discount()] }], has_more: false }];
+    { data: [{ id: "in_second", status: "paid", discounts: [discount()] }], has_more: false }];
   assert.equal((await run()).reason, "coupon_previously_used");
   assert.equal(attempts.length, 0);
 });
@@ -172,4 +173,86 @@ test("conflicting marker fails closed", async () => {
   customer.metadata[APPLICATION_MARKER] = "unknown";
   assert.equal((await run()).reason, "application_marker_conflict");
   assert.equal(attempts.length, 0);
+});
+
+const unpaidInvoice = (patch = {}) => ({ id: "in_unpaid", status: "void", paid: false,
+  amount_paid: 0, payment_intent: null, subscription: "sub_old", discounts: [discount()], ...patch });
+
+test("unpaid abandoned attempts can apply after an expired subscription", async () => {
+  subs.data = [{ id: "sub_old", status: "incomplete_expired", discount: discount() }];
+  invoicePages = [{ data: [unpaidInvoice()], has_more: false }];
+  assert.equal((await run()).status, "coupon_applied");
+  assert.equal(mutations, 1);
+});
+
+test("draft and open unpaid invoices do not count as completed redemptions", async () => {
+  for (const status of ["draft", "open"]) {
+    invoicePages = [{ data: [unpaidInvoice({ status,
+      payment_intent: { status: "requires_payment_method" } })], has_more: false }];
+    customer.metadata = {};
+    customer.discount = null;
+    keys.clear();
+    assert.equal((await run()).status, "coupon_applied", status);
+  }
+});
+
+test("previous agent application can be retried once per confirmed unpaid attempt", async () => {
+  await run();
+  customer.discount = null;
+  invoicePages = [{ data: [unpaidInvoice()], has_more: false }];
+  const firstKey = attempts[0].options.idempotencyKey;
+  const results = await Promise.all([run(), run()]);
+  assert.equal(mutations, 2);
+  assert.ok(results.every(r => ["coupon_applied", "manual_review", "already_applied"].includes(r.status)));
+  assert.notEqual(attempts.at(-1).options.idempotencyKey, firstKey);
+  assert.equal(customer.metadata[APPLICATION_MARKER], "9MSuudHO:v2:2");
+  assert.equal((await run()).status, "already_applied");
+  assert.equal(mutations, 2);
+});
+
+test("paid or refunded completed redemptions still block after an agent marker", async () => {
+  customer.metadata[APPLICATION_MARKER] = "9MSuudHO:v1";
+  invoicePages = [{ data: [unpaidInvoice({ status: "paid", paid: true, amount_paid: 100 })], has_more: false }];
+  assert.equal((await run()).reason, "coupon_previously_used");
+  assert.equal(attempts.length, 0);
+});
+
+test("partial, pending, uncollectible or missing payment history requires review", async () => {
+  for (const patch of [
+    { amount_paid: 50 }, { status: "uncollectible" }, { status: undefined },
+    { paid: undefined }, { payment_intent: undefined },
+    { payment_intent: "pi_unexpanded" }, { payment_intent: { status: "processing" } },
+    { payment_intent: { status: "requires_capture" } }, { payment_intent: { status: "succeeded" } }
+  ]) {
+    invoicePages = [{ data: [unpaidInvoice(patch)], has_more: false }];
+    assert.equal((await run()).reason, "redemption_history_unavailable", JSON.stringify(patch));
+  }
+  assert.equal(attempts.length, 0);
+});
+
+test("historical subscription attachment without matching invoice evidence requires review", async () => {
+  subs.data = [{ id: "sub_old", status: "canceled", discount: discount() }];
+  invoicePages = [{ data: [unpaidInvoice({ subscription: "sub_other" })], has_more: false }];
+  assert.equal((await run()).reason, "redemption_history_unavailable");
+  assert.equal(attempts.length, 0);
+});
+
+test("unpaid invoice does not override an existing discount or active subscription", async () => {
+  invoicePages = [{ data: [unpaidInvoice()], has_more: false }];
+  customer.discount = { coupon: { id: "other_coupon" } };
+  assert.equal((await run()).reason, "existing_discount");
+  customer.discount = null;
+  subs.data = [{ status: "active" }];
+  assert.equal((await run()).reason, "active_subscription");
+  assert.equal(attempts.length, 0);
+});
+
+test("timeout on reapplication is reconciled against the new marker and attached coupon", async () => {
+  customer.metadata[APPLICATION_MARKER] = "9MSuudHO:v1";
+  invoicePages = [{ data: [unpaidInvoice()], has_more: false }];
+  writeFailure = "before";
+  assert.equal((await run()).reason, "application_outcome_unknown");
+  writeFailure = "after";
+  assert.equal((await run()).reason, "application_confirmed_after_retry");
+  assert.equal(mutations, 1);
 });
